@@ -2,9 +2,11 @@
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) custom skill for working on [TACC](https://www.tacc.utexas.edu/) HPC clusters. Teaches Claude Code the specifics of each cluster so it generates correct sbatch scripts, module commands, and filesystem paths without trial and error.
 
+> **Accuracy note:** The Vista and Lonestar6 profiles are verified against live cluster data. Frontera and Stampede3 profiles are based on documentation and may be out of date — verify partition limits and GRES config with `sinfo` before relying on them.
+
 ## What it knows
 
-- **Cluster profiles** — Lonestar6, Frontera, Vista, Stampede3: partitions, GPU/CPU hardware, job limits, Slurm quirks (e.g. LS6 doesn't use `--gres`)
+- **Cluster profiles** — Lonestar6, Frontera, Vista, Stampede3: partitions, GPU/CPU hardware, job limits, Slurm quirks (e.g. LS6 and Vista don't use `--gres`)
 - **Filesystem layout** — `$HOME`, `$WORK`, `$SCRATCH`, `$STOCKYARD` quotas and purge policies
 - **Module management** — version defaults, silent swaps, hidden dependencies via `module spider`
 - **Python environments** — `venv`/`pip` by default, optional `uv` install

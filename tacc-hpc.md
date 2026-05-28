@@ -59,6 +59,7 @@ Always run the detection step silently at the start of any TACC-related task. Us
 **For interactive GPU/compute work**, use `idev`:
 ```bash
 idev -p gpu-a100 -N 1 -n 1 -t 01:00:00    # LS6 example
+idev -p gh-dev   -N 1 -n 1 -t 01:00:00    # Vista example
 ```
 
 ## Cluster profiles
@@ -134,24 +135,76 @@ idev -p gpu-a100 -N 1 -n 1 -t 01:00:00    # LS6 example
 
 ### Vista
 
-**GPU nodes:**
-- NVIDIA Grace-Hopper GH200 superchips
-- 72 ARM (Grace) cores + 1 H100 96GB GPU per node
-- 480 GB unified CPU+GPU memory
+Vista has two node types: Grace-Hopper (GPU) and Grace-Grace (CPU-only). Both are ARM (aarch64).
+
+**Grace-Hopper nodes (gh, gh-dev partitions):**
+- 1x NVIDIA GH200 superchip per node: 72 ARM (Grace) cores + 1 H100 96GB GPU
+- ~480 GB unified CPU+GPU memory (NVLink-C2C connected)
+- A small subset of nodes have the `gh400` feature tag (~576 GB unified memory variant)
+- No NVSwitch — each node has exactly 1 GPU
+
+**Grace-Grace nodes (gg partition):**
+- 2x NVIDIA Grace CPU per node (no GPU)
+- 144 ARM cores, ~480 GB LPDDR5X memory
+- CPU-only ARM workloads; useful for ARM-native compilation and memory-intensive CPU jobs
 
 **Partitions and limits:**
 
-| Partition | Max nodes/job | Max wall | Use case |
-|-----------|---------------|----------|----------|
-| `gh-dev` | 4 | 2 hr | Quick GPU tests |
-| `gh` | 16 | 48 hr | Production GPU jobs |
+| Partition | Nodes | Max nodes/job | Max wall | Max jobs | Max queued | Use case |
+|-----------|-------|---------------|----------|----------|------------|----------|
+| `gh-dev` **(default)** | 20 | 8 | 2 hr | 1 | 3 | Quick GPU tests, interactive dev |
+| `gh` | 576 | 64 | 48 hr | 20 | 40 | Production GPU (GH200) jobs |
+| `gg` | 251 | 32 | 48 hr | 20 | 40 | Production CPU-only ARM jobs |
+
+QOS suffixed `4k` (e.g. `qgh4k`, `qgg4k`) are available for large-memory jobs and cap at 8 nodes; use `#SBATCH --qos=qgh4k` alongside `-p gh` when needed.
+
+**Default modules on Vista:**
+`gcc/15.1.0`, `cuda/12.5` (default; 12.9 is also common), `openmpi/5.0.5`, `python3/3.11.8`, `nvpl/26.1`, `cmake/3.31.5`
+
+Available CUDA versions: `11.8`, `12.4`, `12.5` (D), `12.6`, `12.8`, `12.9`, `13.0`, `13.1`
+
+Note: the Python module on Vista is **`python3`**, not `python`. Use `module load python3` (loaded by default).
 
 **Vista Slurm quirks:**
-- ARM architecture — binaries compiled on other clusters won't work.
-- Each node has exactly 1 GPU (GH200).
-- Uses `--gres=gpu:1` or partition-based allocation (check current config with `sinfo -o "%P %G"`).
-- CUDA 12.x required.
-- `module load cuda/12.6` or similar; check `module avail cuda`.
+- **ARM (aarch64) architecture** — binaries compiled on x86 clusters (LS6, Frontera, Stampede3) will not run. Recompile natively or use ARM-compatible containers.
+- **No `--gres` flag** — GRES is `(null)` on all Vista partitions. GPUs are allocated by partition (`gh`, `gh-dev`), not via `--gres`.
+- Each `gh`/`gh-dev` node has exactly 1 GH200 GPU.
+- Default partition is `gh-dev` (unlike most TACC clusters where it is `development`).
+- CUDA 12.x required (12.5 is default; load a newer version explicitly if needed).
+- `nvpl` (NVIDIA Performance Libraries) provides ARM-optimized BLAS/LAPACK — prefer over Intel MKL which is not available on ARM.
+- For interactive GPU work: `idev -p gh-dev -N 1 -n 1 -t 01:00:00`
+
+**Template (GPU job on Vista):**
+```bash
+#!/bin/bash
+#SBATCH -J my-job
+#SBATCH -p gh
+#SBATCH -N 1
+#SBATCH --ntasks-per-node 1
+#SBATCH -t 02:00:00
+#SBATCH -A <allocation>
+
+module load cuda/12.5
+source $WORK/my-venv/bin/activate
+
+# Your commands here
+```
+
+**Template (CPU-only ARM job on Vista):**
+```bash
+#!/bin/bash
+#SBATCH -J my-cpu-job
+#SBATCH -p gg
+#SBATCH -N 1
+#SBATCH --ntasks-per-node 144
+#SBATCH -t 02:00:00
+#SBATCH -A <allocation>
+
+# No CUDA needed; nvpl provides optimized BLAS/LAPACK
+module load nvpl
+
+# Your commands here
+```
 
 ### Stampede3
 
@@ -225,7 +278,7 @@ module load cuda/11.4
 
 **Common mistakes to avoid:**
 - Using `--gres gpu:N` (space instead of `=`) — always use `--gres=gpu:N`.
-- Using `--gres` on LS6 at all — LS6 does not use GRES.
+- Using `--gres` on LS6 or Vista — neither uses GRES.
 - Requesting more nodes than the partition allows.
 - Requesting more time than the partition allows.
 - Writing output to `$HOME` instead of `$SCRATCH` or `$WORK`.
@@ -316,7 +369,9 @@ module load <name>/<version>
 
 ## Python environment management
 
-TACC clusters provide a system Python via `module load python` (loaded by default). **Only `venv` is available out of the box.** There is no `conda`, `pyenv`, or `uv` preinstalled.
+TACC clusters provide a system Python via `module load python` (loaded by default on most clusters). **Only `venv` is available out of the box.** There is no `conda`, `pyenv`, or `uv` preinstalled.
+
+**Vista exception:** the module is `python3`, not `python`. It is loaded by default as `python3/3.11.8`. Use `module load python3` explicitly if needed.
 
 **Creating a virtual environment:**
 ```bash
@@ -480,6 +535,13 @@ For multi-node GPU serving or training on LS6:
 - Total GPUs = nodes x GPUs_per_node.
 - Ray or other distributed frameworks handle inter-node communication — start a head node, then workers.
 - Use `srun` to launch per-node processes within the sbatch script.
+
+For multi-node GPU work on Vista (`gh` partition):
+- Each node has exactly **1 GH200 GPU**.
+- Total GPUs = number of nodes requested.
+- Set `--tensor-parallel-size 1` and `--pipeline-parallel-size <N_nodes>`, or use tensor parallelism within the unified 480 GB memory of a single node.
+- The large unified memory (480 GB/node) means many models that require multi-node on other clusters can fit on a single Vista node.
+- Interconnect between nodes is InfiniBand (HDR); within-node, NVLink-C2C connects Grace CPU and Hopper GPU.
 
 ## Data transfer
 
