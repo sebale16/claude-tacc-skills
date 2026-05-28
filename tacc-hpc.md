@@ -269,6 +269,58 @@ module load nvpl
 - Check `sinfo -o "%P %G"` for current GRES configuration before using `--gres`.
 - CUDA 12.x modules available.
 
+## Managing allocations
+
+TACC allocations are named project accounts (e.g. `ASC24027`) that charge SUs (service units) for compute time. Every job must specify one via `#SBATCH -A <allocation>`.
+
+**Listing your allocations with balances and expiry:**
+```bash
+/usr/local/etc/taccinfo
+```
+Output shows each allocation name, remaining SUs, and expiry date. Use this to decide which allocation to charge.
+
+**Choosing between multiple allocations — session-scoped selection:**
+
+At the start of each session, run `taccinfo` once, pick an allocation, and remember it for the rest of the conversation. Never ask again after the first choice.
+
+- If the user has exactly one allocation: use it silently, no prompt needed.
+- If the user has multiple allocations: show the `taccinfo` output once and ask which to use. After they answer, treat that as the session allocation — use it in all subsequent job scripts and `sbatch` commands without re-asking.
+- If the user explicitly names a different allocation mid-session, switch to that one for the remainder of the session.
+
+When choosing, prefer allocations with more remaining SUs and later expiry dates. Surface the tradeoffs (nearly-empty balance, expiring soon) so the user can make an informed call.
+
+**Checking partition and QOS constraints per allocation:**
+```bash
+sacctmgr show associations user=$USER format=Account,Partition,QOS,MaxJobs,MaxWall -P
+```
+This shows whether an allocation is restricted to specific partitions or QOS levels. Most TACC allocations use `qdefault` with no partition restriction, but some (especially allocation-specific private partitions) require a particular account.
+
+**Specifying the allocation:**
+
+Hardcode it directly in the job script:
+```bash
+#SBATCH -A ASC24027
+```
+
+Or override on the command line (takes precedence over the script's `#SBATCH -A`):
+```bash
+sbatch --account=ASC24027 myjob.sh
+```
+
+**Important:** Do NOT use shell variable syntax like `${TACC_ALLOCATION:-development}` in `#SBATCH` directives. Slurm's `#SBATCH` parser does not expand shell variables — the literal string becomes the account name and will fail with "Unknown project."
+
+**Private/allocation-linked partitions:**
+
+Some allocations unlock partitions that are not in the standard cluster profiles. These appear in `sinfo` output but are invisible to users without the matching allocation. Examples seen on LS6:
+
+| Partition | CPUs/node | RAM | Max wall | Notes |
+|-----------|-----------|-----|----------|-------|
+| `NuclearEnergy` | 256 | ~502 GB | 5 days | High-memory specialized nodes |
+| `NuclearEnergy-dev` | 256 | ~502 GB | 5 days | Dev queue for same nodes |
+| `TIE` | 128 | — | 5 days | Allocation-specific partition |
+
+If the user sees unfamiliar partitions in `sinfo`, check which allocation gives access by running `sacctmgr show associations` and matching the partition column. Always use `sinfo -p <partition>` to inspect hardware before submitting to an unfamiliar partition.
+
 ## Writing sbatch scripts
 
 **Always follow this process:**
@@ -280,7 +332,7 @@ module load nvpl
    - GPUs per node (to set tensor/pipeline parallelism correctly)
    - Max wall time and max nodes
    - Core count per node (for `--ntasks-per-node` or `--cpus-per-task`)
-4. Set `#SBATCH -A <allocation>` — check available allocations with `/usr/local/etc/taccinfo`.
+4. Set `#SBATCH -A <allocation>` — if the user has multiple allocations, ask which to use (see Managing allocations above).
 
 **Template (GPU job on LS6):**
 ```bash
@@ -332,6 +384,9 @@ echo $TACC_SYSTEM
 
 # List partitions with hardware info
 sinfo -o "%P %l %c %m %G %a"
+
+# Find the default partition (marked with * — scontrol show config does NOT expose DefaultPartition on LS6/Vista)
+sinfo -o "%P" | grep '\*'
 
 # Check if a partition uses GRES
 sinfo -p <partition> -o "%N %G" | head -5

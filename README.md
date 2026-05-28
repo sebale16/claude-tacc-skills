@@ -4,6 +4,28 @@
 
 > **Accuracy note:** The Vista and Lonestar6 profiles are verified against live cluster data. Frontera and Stampede3 profiles are based on documentation and may be out of date — verify partition limits and GRES config with `sinfo` before relying on them.
 
+## Typical workflow
+
+You're on a login node (or connected via SSH), Claude Code is running in a `tmux` session, and you invoke `/tacc-hpc`. From there:
+
+1. **Environment detection** — Claude silently checks `$TACC_SYSTEM` to know which cluster you're on, then picks up your allocation from `taccinfo`. If you have multiple allocations, it asks once and remembers for the session.
+
+2. **Writing job scripts** — You describe what you want to run ("train this model on 2 GPU nodes for 4 hours") and Claude generates a correct `sbatch` script with the right partition, wall time, node count, and directives for *this specific cluster* — no `--gres` on LS6/Vista, correct CUDA module version, output to `$SCRATCH` not `$HOME`, etc.
+
+3. **Module management** — Before loading anything, Claude runs `module spider` to check dependencies and conflicts, warns you if loading a module will silently swap out something you already have loaded, and only proceeds after you confirm.
+
+4. **Submitting and monitoring** — Claude submits the job, watches `squeue`, and when it fails tails the output file and maps the symptom (exit 137, TIMEOUT, `ModuleNotFoundError`) to a concrete fix.
+
+5. **Interactive GPU work** — For quick tests that don't need a full batch job, Claude issues the right `idev` command for your cluster and partition.
+
+6. **Heavy commands on login nodes** — If you ask Claude to `pip install` or download a model, it catches that it's on a login node and proposes wrapping the command in `idev` or a one-off `sbatch` job instead of running it directly and risking a kill from TACC's process monitor.
+
+7. **Model serving / port forwarding** — For vLLM or Jupyter running on a compute node, Claude walks you through the SSH tunnel from your local machine and ensures the service binds to `0.0.0.0` so the tunnel can reach it.
+
+**What it prevents**
+
+Without the skill Claude would guess — and guess wrong — on things like using `--gres` on LS6 (rejected), writing to `$HOME` (quota hit), trying to `pip install` inside a batch job (no internet on compute nodes), or loading a CUDA module without its hidden prerequisite. The skill bakes in the per-cluster quirks so those errors don't happen in the first place.
+
 ## What it knows
 
 - **Cluster profiles** — Lonestar6, Frontera, Vista, Stampede3: partitions, GPU/CPU hardware, job limits, Slurm quirks (e.g. LS6 and Vista don't use `--gres`)
