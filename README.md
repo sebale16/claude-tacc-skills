@@ -26,6 +26,44 @@ ln -sf $STOCKYARD/claude-skills/tacc-hpc.md ~/.claude/skills/tacc-hpc.md
 
 Since `$STOCKYARD` is shared across all TACC clusters, you only clone once and symlink on each cluster.
 
+## Verifying cluster accuracy
+
+The `tests/on_cluster/` directory contains scripts that verify the skill's documented values against live cluster state. Run them after SSH-ing into the respective cluster:
+
+```bash
+# On Lonestar6:
+bash $STOCKYARD/claude-skills/tests/on_cluster/verify_lonestar6.sh
+
+# On Vista:
+bash $STOCKYARD/claude-skills/tests/on_cluster/verify_vista.sh
+```
+
+Each script checks:
+- Partitions exist and match documented names
+- Default partition is correct
+- GPUs are **not** tracked via `--gres` (LS6 and Vista allocate GPUs by partition)
+- `--gres=gpu:N` submissions are rejected with the expected error
+- Module versions listed in the skill are actually available
+- Architecture (`x86_64` on LS6, `aarch64` on Vista)
+
+It also runs `sbatch --test-only` against the job templates in `tests/on_cluster/jobs/` to confirm the scheduler accepts them. Templates cover:
+
+| Script | Cluster | Partition | Nodes | GPUs |
+|--------|---------|-----------|-------|------|
+| `ls6_cpu_1node.sh` | LS6 | `development` | 1 | none |
+| `ls6_gpu_a100_1node.sh` | LS6 | `gpu-a100-dev` | 1 | 3× A100 |
+| `ls6_gpu_a100_2node.sh` | LS6 | `gpu-a100` | 2 | 3× A100/node |
+| `ls6_gpu_small_1node.sh` | LS6 | `gpu-a100-small` | 1 | 1 GPU slice |
+| `vista_cpu_1node.sh` | Vista | `gg` | 1 | none (ARM) |
+| `vista_gpu_1node.sh` | Vista | `gh-dev` | 1 | 1× GH200 |
+| `vista_gpu_2node.sh` | Vista | `gh` | 2 | 1× GH200/node |
+
+Add `--run` to actually submit the jobs and poll for completion via `sacct` (consumes allocation time):
+
+```bash
+bash tests/on_cluster/verify_vista.sh --run
+```
+
 ## Contributing
 
 If something is wrong or missing for your cluster, open an issue or PR. The skill file is `tacc-hpc.md`.
