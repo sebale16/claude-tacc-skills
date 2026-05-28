@@ -43,23 +43,60 @@ Always run the detection step silently at the start of any TACC-related task. Us
 
 ## Login nodes vs compute nodes
 
-**Login nodes** are shared. Acceptable uses:
+**Login nodes** are shared and monitored. Acceptable uses:
 - Editing files, git operations, small compilations
 - Transferring data (scp, rsync, wget)
 - Submitting and monitoring jobs (`sbatch`, `squeue`, `sacct`)
 - Short interactive tests (< 1 min, < 1 GB memory)
-- Running Claude Code
+- Running Claude Code (see below)
 
 **Never do on login nodes:**
 - Run GPU workloads (no GPUs on login nodes)
-- Long-running or memory-intensive processes
+- Long-running or memory-intensive processes (pip install of large packages, model downloads, compilation)
 - Multi-node MPI jobs
 - `nvidia-smi` (no GPUs available)
+
+**Before running any bash command that could be heavy** (pip install, wget/curl for large files, compilation, anything that might take more than ~1 minute), route it through `idev` or `sbatch` instead. Running it directly on a login node risks having the whole session killed by TACC's process monitor.
 
 **For interactive GPU/compute work**, use `idev`:
 ```bash
 idev -p gpu-a100 -N 1 -n 1 -t 01:00:00    # LS6 example
 idev -p gh-dev   -N 1 -n 1 -t 01:00:00    # Vista example
+```
+
+## Running Claude Code on TACC
+
+Claude Code itself is lightweight (API calls + file edits) and won't trigger TACC's process monitor. However, the bash commands it runs on your behalf can — and if TACC kills a subprocess, it can take down the whole Claude Code session.
+
+**Recommended setup: tmux on a login node**
+
+Run Claude Code inside a `tmux` session so it survives SSH disconnections and won't be lost if your terminal drops:
+```bash
+tmux new -s claude      # start a named session
+# ... or reattach to an existing one:
+tmux attach -t claude
+```
+
+This is more persistent than running inside `idev` — idev sessions have a 2-hour wall time on most partitions and will kill everything when they expire.
+
+**How Claude Code should handle heavy commands:**
+
+| Task | Right approach |
+|------|---------------|
+| File edits, git, squeue, sacct | Run directly on login node |
+| pip install, conda, uv sync | Run inside `idev` or as a one-off `sbatch` job |
+| Model downloads (HuggingFace, wget) | Run inside `idev` or `sbatch` |
+| Compilation (make, cmake) | Run inside `idev` or `sbatch` |
+| GPU workloads, training, inference | Always `sbatch` or `idev -p gpu-*` |
+
+When a task falls in the "heavy" category, Claude Code should tell the user what it wants to run and suggest wrapping it in `idev` rather than executing directly. Example:
+```bash
+# Instead of running directly:
+pip install -r requirements.txt
+
+# Start an idev session first:
+idev -p development -N 1 -n 1 -t 00:30:00
+# then run inside it
 ```
 
 ## Cluster profiles
