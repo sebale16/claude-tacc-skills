@@ -134,7 +134,7 @@ idev -p development -N 1 -n 1 -t 00:30:00
 | `gpu-a100` | 73 | 8 | 48 hr | 8 | 32 | Production GPU (A100) jobs |
 | `gpu-a100-dev` | 4 | 2 | 2 hr | 1 | 3 | Quick GPU tests |
 | `gpu-h100` | 4 | 1 | 48 hr | 1 | 4 | H100 GPU jobs |
-| `gpu-a100-small` | 24 | 1 | 48 hr | 4 | 16 | Single-GPU or small GPU jobs |
+| `gpu-a100-small` | 24 | 1 | 48 hr | 3 | 12 | Single-GPU or small GPU jobs |
 | `vm-small` | 28 | 1 | 48 hr | 4 | 16 | Lightweight/VM workloads |
 
 **LS6 Slurm quirks:**
@@ -373,6 +373,43 @@ module load cuda/11.4
 - Writing output to `$HOME` instead of `$SCRATCH` or `$WORK`.
 - Forgetting `module load cuda/<version>` before GPU work.
 - Using `#SBATCH -n` (total tasks) when you mean `#SBATCH --ntasks-per-node`.
+
+## Job limits
+
+Limits on LS6 are enforced by **QOS**, not directly by partition. Each partition maps to exactly one QOS; the QOS sets the binding constraints. The partition tables above list "Max jobs" (running at once) and "Max queued" (total submitted including pending).
+
+**Partition → QOS mapping on LS6:**
+
+| Partition | QOS | Max running | Max submitted | Max nodes/job | Max wall |
+|-----------|-----|-------------|---------------|---------------|----------|
+| `development` | `qdevelopment` | 1 | 3 | 8 | 2 hr |
+| `normal` | `qnormal` | 20 | 100 | 64 | 48 hr |
+| `large` | `qlarge` | 1 | 4 | 256 | 48 hr |
+| `gpu-a100` | `qa100` | 8 | 32 | 8 | 48 hr |
+| `gpu-a100-dev` | `qa100development` | 1 | 3 | 2 | 2 hr |
+| `gpu-h100` | `qh100` | 1 | 4 | 1 | 48 hr |
+| `gpu-a100-small` | `qa100small` | 3 | 12 | 1 | 48 hr |
+| `vm-small` | `qsmall` | 4 | 16 | 1 | 48 hr |
+
+**Checking current limits (live, authoritative):**
+```bash
+sacctmgr show qos format=Name,MaxWall,MaxNodes,MaxSubmitJobsPerUser,MaxJobsPerUser -P
+```
+
+**Checking your current usage:**
+```bash
+# Jobs running and queued right now
+squeue -u $USER -o "%.10i %.9P %.20j %.8T %.10M %.6D"
+
+# Count by state
+squeue -u $USER -h -o "%T" | sort | uniq -c
+```
+
+**What happens when you hit a limit:**
+- Submitting beyond `MaxSubmitPU` → `sbatch` is rejected immediately with "Job violates accounting/QOS policy."
+- Running jobs beyond `MaxJobsPU` → job is held in `PENDING` state with reason `QOSMaxJobsPerUserLimit` until a running job finishes.
+
+**Array jobs count differently:** each array task counts as a separate job against both limits. A 50-task array on `normal` (MaxJobsPU=20) will have 20 tasks running and 30 held at any time.
 
 ## Discovering cluster state at runtime
 
