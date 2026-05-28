@@ -29,6 +29,7 @@ Without the skill Claude would guess — and guess wrong — on things like usin
 ## What it knows
 
 - **Cluster profiles** — Lonestar6, Frontera, Vista, Stampede3: partitions, GPU/CPU hardware, job limits, Slurm quirks (e.g. LS6 and Vista don't use `--gres`)
+- **Allocations** — reads `taccinfo` at session start, picks an allocation once (asking if you have multiple), and reuses it for the rest of the session; knows per-partition QOS limits and surfaces private/allocation-linked partitions
 - **Filesystem layout** — `$HOME`, `$WORK`, `$SCRATCH`, `$STOCKYARD` quotas and purge policies
 - **Module management** — version defaults, silent swaps, hidden dependencies via `module spider`
 - **Python environments** — `venv`/`pip` by default, optional `uv` install
