@@ -206,6 +206,16 @@ Vista has two node types: Grace-Hopper (GPU) and Grace-Grace (CPU-only). Both ar
 | `gh` | 576 | 64 | 48 hr | 20 | 40 | Production GPU (GH200) jobs |
 | `gg` | 251 | 32 | 48 hr | 20 | 40 | Production CPU-only ARM jobs |
 
+**Partition → QOS mapping (limits are enforced by QOS, not partition directly):**
+
+| Partition | QOS | Max running | Max submitted | Max nodes/job | Max wall |
+|-----------|-----|-------------|---------------|---------------|----------|
+| `gh-dev` | `qdevelopment` | 1 | 3 | 8 | 2 hr |
+| `gh` | `qgh` | 20 | 40 | 64 | 48 hr |
+| `gg` | `qgg` | 20 | 40 | 32 | 48 hr |
+| `gh` (large-mem) | `qgh4k` | 20 | 40 | 8 | 48 hr |
+| `gg` (large-mem) | `qgg4k` | 20 | 40 | 8 | 48 hr |
+
 QOS suffixed `4k` (e.g. `qgh4k`, `qgg4k`) are available for large-memory jobs and cap at 8 nodes; use `#SBATCH --qos=qgh4k` alongside `-p gh` when needed.
 
 **Default modules on Vista:**

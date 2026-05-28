@@ -41,6 +41,18 @@ if [[ "${TACC_SYSTEM:-}" != "vista" ]]; then
     exit 1
 fi
 
+# --- Allocation detection ---
+# Pick the first allocation from taccinfo (or accept one from the environment).
+# Used for --gres rejection test and sbatch --test-only calls.
+if [[ -z "${TACC_ALLOCATION:-}" ]]; then
+    TACC_ALLOCATION=$(/usr/local/etc/taccinfo 2>/dev/null | grep -oP '\|\s+\K[A-Z][A-Z0-9]+(?=\s+\d)' | head -1)
+fi
+if [[ -z "${TACC_ALLOCATION:-}" ]]; then
+    echo "ERROR: Could not detect a TACC allocation. Set TACC_ALLOCATION=<name> and retry."
+    exit 1
+fi
+echo "  (using allocation: $TACC_ALLOCATION)"
+
 echo "=== Vista on-cluster verification ==="
 
 # --- Identity & architecture ---
@@ -52,8 +64,9 @@ for partition in gh-dev gh gg; do
 done
 
 # --- Default partition ---
+# Vista marks the default with '*' in sinfo; scontrol show config has no DefaultPartition line.
 check_output_contains "default partition is 'gh-dev'" "gh-dev" \
-    bash -c "scontrol show config | grep -i defaultpartition"
+    bash -c "sinfo -o '%P' | grep '\*'"
 
 # --- No GRES on GPU partition ---
 check_output_not_contains "gh partition TRES does not track GPUs via gres" "gpu=" \
@@ -80,10 +93,10 @@ done
 
 # --- --gres rejected ---
 echo "  checking --gres=gpu:1 is rejected on gh..."
-gres_out=$(printf '#!/bin/bash\n#SBATCH -p gh\n#SBATCH --gres=gpu:1\nsleep 1\n' \
+gres_out=$(printf '#!/bin/bash\n#SBATCH -p gh\n#SBATCH -N 1\n#SBATCH -t 01:00:00\n#SBATCH -A %s\n#SBATCH --gres=gpu:1\nsleep 1\n' "$TACC_ALLOCATION" \
     | sbatch --test-only 2>&1) || true
 if echo "$gres_out" | grep -qi "invalid generic resource\|gres"; then
-    _pass "--gres=gpu:1 rejected on gh partition"
+    _pass "--gres=gpu:1 rejected with 'Invalid generic resource'"
 else
     _fail "--gres=gpu:1 should be rejected but was not  (output: $gres_out)"
 fi
@@ -93,7 +106,7 @@ echo ""
 echo "  --- sbatch --test-only validation ---"
 for job in vista_cpu_1node.sh vista_gpu_1node.sh vista_gpu_2node.sh; do
     job_path="$JOBS_DIR/$job"
-    out=$(sbatch --test-only "$job_path" 2>&1) || true
+    out=$(sbatch --test-only --account="$TACC_ALLOCATION" "$job_path" 2>&1) || true
     if echo "$out" | grep -qi "error\|invalid\|failed"; then
         _fail "$job accepted by scheduler  (output: $out)"
     else
