@@ -137,6 +137,19 @@ idev -p development -N 1 -n 1 -t 00:30:00
 | `gpu-a100-small` | 24 | 1 | 48 hr | 3 | 12 | Single-GPU or small GPU jobs |
 | `vm-small` | 28 | 1 | 48 hr | 4 | 16 | Lightweight/VM workloads |
 
+**Partition → QOS mapping (limits are enforced by QOS, not partition directly):**
+
+| Partition | QOS | Max running | Max submitted | Max nodes/job | Max wall |
+|-----------|-----|-------------|---------------|---------------|----------|
+| `development` | `qdevelopment` | 1 | 3 | 8 | 2 hr |
+| `normal` | `qnormal` | 20 | 100 | 64 | 48 hr |
+| `large` | `qlarge` | 1 | 4 | 256 | 48 hr |
+| `gpu-a100` | `qa100` | 8 | 32 | 8 | 48 hr |
+| `gpu-a100-dev` | `qa100development` | 1 | 3 | 2 | 2 hr |
+| `gpu-h100` | `qh100` | 1 | 4 | 1 | 48 hr |
+| `gpu-a100-small` | `qa100small` | 3 | 12 | 1 | 48 hr |
+| `vm-small` | `qsmall` | 4 | 16 | 1 | 48 hr |
+
 **LS6 Slurm quirks:**
 - **No `--gres` flag.** GPUs are allocated by choosing the GPU partition. Using `--gres=gpu:N` will cause `sbatch` to fail with "Invalid generic resource (gres) specification."
 - All 3 GPUs on a node are allocated to the job — you cannot request fewer than 3 (except on `gpu-a100-small`).
@@ -376,20 +389,7 @@ module load cuda/11.4
 
 ## Job limits
 
-Limits on LS6 are enforced by **QOS**, not directly by partition. Each partition maps to exactly one QOS; the QOS sets the binding constraints. The partition tables above list "Max jobs" (running at once) and "Max queued" (total submitted including pending).
-
-**Partition → QOS mapping on LS6:**
-
-| Partition | QOS | Max running | Max submitted | Max nodes/job | Max wall |
-|-----------|-----|-------------|---------------|---------------|----------|
-| `development` | `qdevelopment` | 1 | 3 | 8 | 2 hr |
-| `normal` | `qnormal` | 20 | 100 | 64 | 48 hr |
-| `large` | `qlarge` | 1 | 4 | 256 | 48 hr |
-| `gpu-a100` | `qa100` | 8 | 32 | 8 | 48 hr |
-| `gpu-a100-dev` | `qa100development` | 1 | 3 | 2 | 2 hr |
-| `gpu-h100` | `qh100` | 1 | 4 | 1 | 48 hr |
-| `gpu-a100-small` | `qa100small` | 3 | 12 | 1 | 48 hr |
-| `vm-small` | `qsmall` | 4 | 16 | 1 | 48 hr |
+On all TACC clusters, per-user job limits are enforced by **QOS** (Quality of Service), not directly by partition. Each partition maps to a QOS that sets the binding constraints. The cluster profile tables above list the resulting "Max jobs" (running at once) and "Max queued" (total submitted including pending) for each partition. To see the QOS-level limits for the cluster you are on, use the discovery command below.
 
 **Checking current limits (live, authoritative):**
 ```bash
