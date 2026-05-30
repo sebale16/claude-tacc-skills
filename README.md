@@ -43,8 +43,9 @@ Without the skill Claude would guess — and guess wrong — on things like usin
 
 ```bash
 git clone git@github.com:sebale16/claude-tacc-skills.git $STOCKYARD/claude-skills
-mkdir -p ~/.claude/skills
-ln -sf $STOCKYARD/claude-skills/tacc-hpc.md ~/.claude/skills/tacc-hpc.md
+# Claude Code discovers each personal skill as ~/.claude/skills/<name>/SKILL.md
+mkdir -p ~/.claude/skills/tacc-hpc
+ln -sfn $STOCKYARD/claude-skills/tacc-hpc.md ~/.claude/skills/tacc-hpc/SKILL.md
 ```
 
 Since `$STOCKYARD` is shared across all TACC clusters, you only clone once and symlink on each cluster.
