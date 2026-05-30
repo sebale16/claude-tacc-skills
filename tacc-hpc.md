@@ -58,6 +58,12 @@ Always run the detection step silently at the start of any TACC-related task. Us
 
 **Before running any bash command that could be heavy** (pip install, wget/curl for large files, compilation, anything that might take more than ~1 minute), route it through `idev` or `sbatch` instead. Running it directly on a login node risks having the whole session killed by TACC's process monitor.
 
+**Job submission (`sbatch`) only works from login nodes.** Compute nodes (including `idev` sessions and the inside of a running batch job) **cannot submit jobs** — `sbatch` there fails, often with empty output or "sbatch not available on compute nodes." (Query commands like `squeue`, `sacct`, `sacctmgr`, and `scontrol` *do* work from compute nodes — it's only submission that's blocked.) This breaks any self-chaining design where a batch job tries to submit or queue the next job directly (e.g. a relay/dependency chain that calls `sbatch` from within the job). To submit or chain jobs from a compute node, issue the command over `ssh` to a login node:
+```bash
+ssh -o BatchMode=yes login2 "cd $WORK/myproject && sbatch myjob.slurm"
+```
+Compute→login `ssh` uses key auth (no MFA) and works from any node. LS6 login nodes are `login1`/`login2`/`login3`; loop over them for resilience.
+
 **For interactive GPU/compute work**, use `idev`:
 ```bash
 idev -p gpu-a100 -N 1 -n 1 -t 01:00:00    # LS6 example
@@ -66,18 +72,24 @@ idev -p gh-dev   -N 1 -n 1 -t 01:00:00    # Vista example
 
 ## Running Claude Code on TACC
 
-Claude Code itself is lightweight (API calls + file edits) and won't trigger TACC's process monitor. However, the bash commands it runs on your behalf can — and if TACC kills a subprocess, it can take down the whole Claude Code session.
+Claude Code itself is lightweight (API calls + file edits), but the bash commands it runs on your behalf can be heavy — and if TACC's process monitor kills a subprocess on a login node, it can take down the whole Claude Code session.
 
-**Recommended setup: tmux on a login node**
+**Recommended setup: run Claude Code on a compute node, inside tmux.**
 
-Run Claude Code inside a `tmux` session so it survives SSH disconnections and won't be lost if your terminal drops:
+Running Claude Code directly on a login node has proven unreliable — the process monitor kills sessions and login nodes get overloaded. Instead, grab a compute allocation and run Claude Code there:
 ```bash
-tmux new -s claude      # start a named session
-# ... or reattach to an existing one:
-tmux attach -t claude
+tmux new -s claude                          # start tmux on the LOGIN node first
+idev -p development -N 1 -n 1 -t 02:00:00   # then drop into a compute node
+# ... now launch claude inside the idev session
+```
+Starting `tmux` on the login node (before `idev`) means the session survives SSH drops; Claude Code then runs on the compute node where heavy subcommands are safe.
+
+**Trade-off — job submission:** because Claude Code is now on a compute node, it **cannot call `sbatch` directly** (see "Login nodes vs compute nodes"). It must submit and chain jobs over `ssh` to a login node:
+```bash
+ssh -o BatchMode=yes login2 "cd $WORK/myproject && sbatch myjob.slurm"
 ```
 
-This is more persistent than running inside `idev` — idev sessions have a 2-hour wall time on most partitions and will kill everything when they expire.
+**Trade-off — persistence:** `idev` sessions have a wall-time limit (2 hr on most partitions) and kill everything when they expire. For long unattended work, request a longer allocation where the partition allows it, or run the actual workload as detached `sbatch` jobs (submitted via the `ssh` pattern above) so progress survives the idev session ending.
 
 **How Claude Code should handle heavy commands:**
 
