@@ -34,12 +34,37 @@ Always run the detection step silently at the start of any TACC-related task. Us
 | `/scratch/<allocation>/<user>` | `$SCRATCH` | Unlimited | No | Yes (files untouched >10 days) | Job I/O, temporary large files |
 | `$STOCKYARD` | `$STOCKYARD` | (same as /work) | No | No | Cross-cluster shared work directory (parent of per-system $WORK) |
 
+Actual mount names vary by cluster — e.g. on Frontera `$WORK` is `/work2/<group>/<user>/frontera` and `$SCRATCH` is `/scratch2/<group>/<user>`. Use the env vars (or `echo $SCRATCH`) rather than guessing paths.
+
 **Key rules:**
 - Never write large files or job output to `$HOME` — it has a 10 GB hard quota.
-- Use `$WORK` for anything that must persist (model weights, venvs, datasets).
+- Use `$WORK` for anything that must persist (model weights, venvs, datasets, code, final results).
 - Use `$SCRATCH` for job I/O — it is on a fast parallel filesystem (Lustre or BeeGFS) but files are **purged** if untouched for 10 days.
 - `$STOCKYARD` (`/work/<allocation>/<user>`) is shared across clusters. `$WORK` is `$STOCKYARD/<system>`.
+- `$WORK` also has a **file-count quota** ("File Usage" in `taccinfo`). Thousands of small output files can exhaust it long before the GB quota.
 - Run `/usr/local/etc/taccinfo` to check current quotas and allocation balances.
+
+### ⚠️ Job I/O must go to `$SCRATCH`, never `$WORK` (enforced — queue access gets revoked)
+
+`$WORK` is Stockyard, a single filesystem shared by **all** TACC clusters, and not built for job I/O. TACC admins monitor it, and jobs doing intensive I/O there get the user's **queue access disabled**. This happened to this user on Frontera (Aug–Sep 2026): many concurrent 1-node jobs running out of `/work2/...` → every later `sbatch` failed with:
+```
+--> Verifying access to desired queue (normal)...FAILED
+One or more of your previous batch jobs have been identified
+as potentially causing system problems. Please contact TACC
+support by submitting a ticket to re-enable queue access.
+```
+Access came back only after a support ticket **and** an admin review of the updated workflow path. If you see this error, don't try other partitions to get around it — tell the user to file a ticket (TACC portal → Consulting → Submit a ticket).
+
+**Rules for every job script (no exceptions):**
+- Run directory (`cd` target), inputs read repeatedly, outputs, checkpoints → under `$SCRATCH`.
+- `#SBATCH -o` / `#SBATCH -e` logs → under `$SCRATCH`. `#SBATCH` lines don't expand shell variables, so use an **absolute** scratch path (`%j` is fine): `#SBATCH -o /scratch2/<group>/<user>/proj/logs/job.%j.out`. A relative path resolves against the submit directory — submitting from `$WORK` puts the logs on `$WORK`.
+- Keep the job scripts in `$SCRATCH` too and submit from there, so the whole workflow is one scratch path you can hand to TACC support.
+- Reading executables/venvs/containers from `$WORK` or `$HOME` once at job start is fine. Reading large datasets repeatedly from `$WORK` is not — stage them to `$SCRATCH` first.
+- Many small concurrent jobs (arrays, sweeps, Python workers) are the most dangerous pattern: their metadata traffic adds up. Keep each one's I/O on `$SCRATCH` and avoid many tiny files.
+
+Before submitting, grep the script for `$WORK`, `/work`, and relative `-o`/`-e` paths.
+
+**Analysis workflow:** analyze results **in place on `$SCRATCH`** — no need to copy to `$WORK` first. Do heavy post-processing (e.g. looping over all snapshots) in `idev` or a batch job, not on a login node. Then copy only what must persist (reduced statistics, plots, a few restart files) to `$WORK`, and `tar` large raw output into one file for Ranch (tape archive). Remind users that scratch is purged.
 
 ## Login nodes vs compute nodes
 
@@ -60,7 +85,7 @@ Always run the detection step silently at the start of any TACC-related task. Us
 
 **Job submission (`sbatch`) only works from login nodes.** Compute nodes (including `idev` sessions and the inside of a running batch job) **cannot submit jobs** — `sbatch` there fails, often with empty output or "sbatch not available on compute nodes." (Query commands like `squeue`, `sacct`, `sacctmgr`, and `scontrol` *do* work from compute nodes — it's only submission that's blocked.) This breaks any self-chaining design where a batch job tries to submit or queue the next job directly (e.g. a relay/dependency chain that calls `sbatch` from within the job). To submit or chain jobs from a compute node, issue the command over `ssh` to a login node:
 ```bash
-ssh -o BatchMode=yes login2 "cd $WORK/myproject && sbatch myjob.slurm"
+ssh -o BatchMode=yes login2 "cd $SCRATCH/myproject && sbatch myjob.slurm"
 ```
 Compute→login `ssh` uses key auth (no MFA) and works from any node. LS6 login nodes are `login1`/`login2`/`login3`; loop over them for resilience.
 
@@ -86,7 +111,7 @@ Starting `tmux` on the login node (before `idev`) means the session survives SSH
 
 **Trade-off — job submission:** because Claude Code is now on a compute node, it **cannot call `sbatch` directly** (see "Login nodes vs compute nodes"). It must submit and chain jobs over `ssh` to a login node:
 ```bash
-ssh -o BatchMode=yes login2 "cd $WORK/myproject && sbatch myjob.slurm"
+ssh -o BatchMode=yes login2 "cd $SCRATCH/myproject && sbatch myjob.slurm"
 ```
 
 **Trade-off — persistence:** `idev` sessions have a wall-time limit (2 hr on most partitions) and kill everything when they expire. For long unattended work, request a longer allocation where the partition allows it, or run the actual workload as detached `sbatch` jobs (submitted via the `ssh` pattern above) so progress survives the idev session ending.
@@ -405,7 +430,8 @@ module load cuda/11.4
 - Using `--gres` on LS6 or Vista — neither uses GRES.
 - Requesting more nodes than the partition allows.
 - Requesting more time than the partition allows.
-- Writing output to `$HOME` instead of `$SCRATCH` or `$WORK`.
+- Writing job output or logs to `$HOME` or `$WORK` instead of `$SCRATCH` (`$WORK` job I/O gets queue access revoked — see Filesystem layout).
+- Relative `#SBATCH -o`/`-e` paths when submitting from `$WORK` — logs land on `$WORK`.
 - Forgetting `module load cuda/<version>` before GPU work.
 - Using `#SBATCH -n` (total tasks) when you mean `#SBATCH --ntasks-per-node`.
 
@@ -517,6 +543,12 @@ module list
 module load <prerequisite>
 module load <name>/<version>
 ```
+
+### Using another user's files and modules
+
+**Using another user's module collection:** `module restore <name>` only looks in *your own* `~/.lmod.d/`; passing a path to someone else's collection fails ("User module collection ... does not exist"). If you can read their `~/.lmod.d/<name>` file, pull the module list out of it (`grep fullName`) and `module load` those modules explicitly in the job script, then verify the target binary with `ldd <binary> | grep "not found"` (should print nothing).
+
+**Running a collaborator's executables/data:** TACC home/work/scratch dirs are private by default; owners grant access with ACLs (`setfacl -m u:<user>:rX <dir>`). Check with `getfacl <dir>`. An execute-only (`--x`) ACL lets you traverse a directory but **not list it** — you need exact paths, and `ls` gives "Permission denied". Scratch dirs need their own ACL even if home is shared. Read-only access to binaries is enough to run them; run output must still go to your own `$SCRATCH`.
 
 ## Python environment management
 
@@ -668,6 +700,7 @@ sacct -j <jobid> --format=JobID,JobName,Elapsed,State,MaxRSS,MaxVMSize,ExitCode
 | `ModuleNotFoundError` (Python) | exit 1 | Venv not activated in job script | Add `source $WORK/my-venv/bin/activate` |
 | Connection timeout / DNS error | exit 1 | Tried to download from internet on compute node | Pre-download on login node (see Network restrictions) |
 | `Permission denied` on scratch | exit 1 | Files purged (untouched >10 days) | Re-stage data to `$SCRATCH` before resubmitting |
+| `Verifying access to desired queue ...FAILED` / "previous batch jobs ... causing system problems" | submit fails | Queue access revoked by admins, usually for heavy job I/O on `$WORK` | Move all job I/O + logs to `$SCRATCH`, file a TACC ticket with the new workflow path |
 | `Invalid generic resource (gres)` | submit fails | Used `--gres` on a cluster that doesn't support it | Check cluster profile — LS6 does not use GRES |
 
 **Email notifications:**
